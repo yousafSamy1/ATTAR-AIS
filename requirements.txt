@@ -1,0 +1,6 @@
+PyQt6==6.5.0
+pandas==2.0.0
+reportlab==4.0.4
+openpyxl==3.1.2
+sqlite3
+pillow==9.5.0

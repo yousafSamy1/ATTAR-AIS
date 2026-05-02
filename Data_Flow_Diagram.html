@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Flow Diagram - Attar AIS</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f4f4f9;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        .mermaid {
+            background-color: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="mermaid">
+        flowchart TD
+            %% Styling
+            classDef entity fill:#fff,stroke:#000,stroke-width:4px,shape:rect;
+            classDef process fill:#fff,stroke:#000,stroke-width:1px,rx:15,ry:15;
+            classDef store fill:#fff,stroke:#000,stroke-width:1px,shape:rect;
+
+            %% Data Stores (Top)
+            PROD["Products & Prices DB"]:::store
+            INV_DB["Inventory DB"]:::store
+
+            %% Entities (Left & Right)
+            CUST["Customer"]:::entity
+            STOCK["Physical Stock"]:::entity
+
+            %% Processes (Middle)
+            POS(["Process POS Sale"]):::process
+            DEDUCT(["Deduct Inventory"]):::process
+
+            %% Processes (Bottom)
+            PAY(["Process Payment"]):::process
+            ACC(["Auto Accounting"]):::process
+
+            %% Data Stores (Bottom)
+            SALES["Sales Invoices"]:::store
+            GL["General Ledger"]:::store
+
+            %% -----------------------
+            %% Data Flows (Arrows)
+            %% -----------------------
+
+            PROD --> POS
+            CUST -- "Select Items" --> POS
+            POS -- "Items Sold" --> DEDUCT
+            
+            DEDUCT --> INV_DB
+            DEDUCT -- "Stock Removed" --> STOCK
+            
+            POS -- "Sale Total" --> PAY
+            DEDUCT -- "Items Ready" --> PAY
+            
+            PAY -- "Receipt & Items" --> CUST
+            
+            PAY --> SALES
+            PAY -- "Financial Data" --> ACC
+            ACC --> GL
+    </div>
+
+</body>
+</html>
