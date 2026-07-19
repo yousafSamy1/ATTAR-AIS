@@ -1,352 +1,329 @@
+
 import sqlite3
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                            QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
-                            QComboBox, QFormLayout, QDoubleSpinBox, QDateEdit,
-                            QMessageBox)
+                             QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
+                             QComboBox, QFormLayout, QDoubleSpinBox, QDateEdit,
+                             QMessageBox, QFrame, QHeaderView)
 from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtGui import QColor
 from database.db_config import DatabaseConnection
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Union
 
+from modules.theme import COLORS, get_current_theme, get_button_style
+from modules.localization import tr
+
 class AccountingModule(QWidget):
-    def __init__(self):
+    def __init__(self, user=None):
         super().__init__()
+        self.user = user
         self.init_ui()
         
     def init_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(15)
         
         # Header
-        header = QLabel("Accounting Module")
-        header.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 20px;")
+        header = QLabel(tr('accounting'))
+        header.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {COLORS['text_main']}; margin-bottom: 20px; background: transparent; border: none; border-bottom: 2px solid {COLORS['border']}; padding-bottom: 8px;")
         layout.addWidget(header)
         
-        # Journal Entry Form
-        form_group = QWidget()
-        form_layout = QFormLayout(form_group)
+        # Journal Entry Form Card
+        self.form_card = QFrame()
+        self.form_card.setObjectName("FormCard")
+        self.form_card.setStyleSheet(f"""
+            QFrame#FormCard {{
+                background: {COLORS['bg_card']}; 
+                border-radius: 20px; 
+                border: 1.5px solid {COLORS['border']};
+            }}
+            QLabel {{
+                background: transparent;
+                color: {COLORS['text_sub']};
+                font-weight: bold;
+                font-size: 13px;
+                border: none;
+            }}
+        """)
+        form_vbox = QVBoxLayout(self.form_card)
+        form_vbox.setContentsMargins(30, 30, 30, 30)
+        
+        form_layout = QFormLayout()
+        form_layout.setSpacing(20)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         
         # Date
         self.date_edit = QDateEdit()
         self.date_edit.setDate(QDate.currentDate())
-        form_layout.addRow("Date:", self.date_edit)
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setMinimumWidth(250)
+        form_layout.addRow(f"{tr('date')}:", self.date_edit)
         
         # Reference Number
         self.ref_input = QLineEdit()
-        form_layout.addRow("Reference No:", self.ref_input)
+        self.ref_input.setPlaceholderText("e.g. JE-001")
+        form_layout.addRow(f"{tr('reference')}:", self.ref_input)
         
         # Description
         self.desc_input = QLineEdit()
-        form_layout.addRow("Description:", self.desc_input)
+        self.desc_input.setPlaceholderText("Enter transaction summary...")
+        form_layout.addRow(f"{tr('description')}:", self.desc_input)
         
-        layout.addWidget(form_group)
+        form_vbox.addLayout(form_layout)
+        layout.addWidget(self.form_card)
         
+        # Table Section Header
+        tl = QLabel("ENTRY LINES")
+        tl.setStyleSheet(f"color: {COLORS['accent']}; font-weight: 900; font-size: 11px; letter-spacing: 2px; background: transparent; border: none;")
+        layout.addWidget(tl)
+
         # Journal Entry Items Table
         self.items_table = QTableWidget()
         self.items_table.setColumnCount(4)
-        self.items_table.setHorizontalHeaderLabels(["Account", "Description", "Debit", "Credit"])
-        self.items_table.setColumnWidth(0, 200)  # Account column
-        self.items_table.setColumnWidth(1, 200)  # Description column
+        self.items_table.setHorizontalHeaderLabels(["Type", "Description", "Debit", "Credit"])
+        
+        # Explicit Header Styling
+        header = self.items_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setMinimumHeight(50)
+        
+        self.items_table.verticalHeader().setVisible(False)
+        self.items_table.setAlternatingRowColors(True)
+        self.items_table.setShowGrid(False)
+        self.items_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {COLORS['bg_card']};
+                alternate-background-color: {COLORS['bg'] if get_current_theme() == 'dark' else '#F8FAFC'};
+                border: 1.5px solid {COLORS['border']};
+                border-radius: 15px;
+            }}
+            QTableWidget::item {{
+                color: {COLORS['text_main']};
+                border: none;
+            }}
+        """)
         layout.addWidget(self.items_table)
         
-        # Add Item Button
-        add_item_btn = QPushButton("Add Entry Line")
-        add_item_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2ecc71;
-                color: white;
-                padding: 8px 15px;
-                border-radius: 4px;
-                font-size: 14px;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #27ae60;
-                transform: scale(1.05);
-            }
-            QPushButton:pressed {
-                background-color: #27ae60;
-            }
-        """)
+        # Totals Card
+        totals_card = QFrame()
+        totals_card.setStyleSheet(f"background: {COLORS['bg_card']}; border-radius: 12px; border: 1.5px solid {COLORS['border']};")
+        th = QHBoxLayout(totals_card)
+        th.setContentsMargins(20, 15, 20, 15)
+        
+        self.debit_total_label = QLabel("Total Debit: EGP 0.00")
+        self.debit_total_label.setStyleSheet(f"color: {COLORS['accent']}; font-weight: 900; font-size: 14px; background: transparent; border: none;")
+        
+        self.credit_total_label = QLabel("Total Credit: EGP 0.00")
+        self.credit_total_label.setStyleSheet(f"color: {COLORS['blue']}; font-weight: 900; font-size: 14px; background: transparent; border: none;")
+        
+        th.addWidget(self.debit_total_label)
+        th.addStretch()
+        th.addWidget(self.credit_total_label)
+        layout.addWidget(totals_card)
+        
+        # Actions
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(15)
+        
+        add_item_btn = QPushButton("➕ Add Entry Line")
+        add_item_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_item_btn.setStyleSheet(get_button_style('accent', padding="12px 25px"))
         add_item_btn.clicked.connect(self.add_entry_line)
         
-        # Totals Display
-        totals_layout = QHBoxLayout()
-        self.debit_total_label = QLabel("Total Debit: $0.00")
-        self.credit_total_label = QLabel("Total Credit: $0.00")
-        totals_layout.addWidget(self.debit_total_label)
-        totals_layout.addWidget(self.credit_total_label)
-        layout.addLayout(totals_layout)
-        
-        # Save Button
-        save_btn = QPushButton("Post Journal Entry")
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                padding: 8px 15px;
-                border-radius: 4px;
-                font-size: 14px;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-                transform: scale(1.05);
-            }
-            QPushButton:pressed {
-                background-color: #2980b9;
-            }
-        """)
+        save_btn = QPushButton("💾 Post Journal Entry")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet(get_button_style('blue', padding="12px 25px"))
         save_btn.clicked.connect(self.save_journal_entry)
         
-        # Clear Button
-        clear_btn = QPushButton("Clear Form")
-        clear_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                color: white;
-                padding: 8px 15px;
-                border-radius: 4px;
-                font-size: 14px;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #c0392b;
-                transform: scale(1.05);
-            }
-            QPushButton:pressed {
-                background-color: #c0392b;
-            }
-        """)
+        clear_btn = QPushButton("🧹 Clear Form")
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setStyleSheet(get_button_style('red', padding="12px 25px"))
         clear_btn.clicked.connect(self.clear_form)
         
-        # Add buttons to layout
-        button_layout = QHBoxLayout()
+        self.template_combo = QComboBox()
+        self.template_combo.addItems([
+            "Select Adjusting Entry Template...",
+            "Accrued Salaries",
+            "Accrued Rent",
+            "Utilities Payable",
+            "Depreciation",
+            "Bad Debt"
+        ])
+        self.template_combo.setStyleSheet(get_button_style('bg_mid', padding="12px 15px"))
+        self.template_combo.currentIndexChanged.connect(self.apply_template)
+        
+        button_layout.addWidget(self.template_combo)
         button_layout.addWidget(add_item_btn)
         button_layout.addWidget(save_btn)
         button_layout.addWidget(clear_btn)
         button_layout.addStretch()
         layout.addLayout(button_layout)
         
-        # Initialize with one empty row
         self.add_entry_line()
+        self.add_entry_line()
+
+    def apply_template(self, index):
+        if index == 0: return
+        
+        template = self.template_combo.currentText()
+        self.clear_form()
+        self.ref_input.setText(f"ADJ-{datetime.now().strftime('%m%d')}")
+        
+        # Add two lines explicitly (since clear_form leaves it empty)
+        self.add_entry_line()
+        self.add_entry_line()
+        
+        debit_account = None
+        credit_account = None
+        desc = ""
+        
+        if template == "Accrued Salaries":
+            debit_account = "6000"  # Salaries Expense
+            credit_account = "2100" # Salaries Payable
+            desc = "Accrued salaries for the month"
+        elif template == "Accrued Rent":
+            debit_account = "6100"  # Rent Expense
+            credit_account = "2200" # Rent Payable
+            desc = "Accrued rent for the month"
+        elif template == "Utilities Payable":
+            debit_account = "6200"  # Utilities Expense
+            credit_account = "2300" # Utilities Payable
+            desc = "Accrued utilities for the month"
+        elif template == "Depreciation":
+            debit_account = "6700"  # Depreciation Expense
+            credit_account = "1350" # Accumulated Depreciation
+            desc = "Monthly depreciation expense"
+        elif template == "Bad Debt":
+            debit_account = "6600"  # Bad Debt Expense
+            credit_account = "1100" # Accounts Receivable
+            desc = "Write-off bad debt"
+            
+        self.desc_input.setText(desc)
+        
+        # Set first row (Debit)
+        account_combo_1 = self.items_table.cellWidget(0, 0)
+        desc_input_1 = self.items_table.cellWidget(0, 1)
+        if account_combo_1:
+            index1 = account_combo_1.findData(debit_account)
+            if index1 >= 0: account_combo_1.setCurrentIndex(index1)
+        if desc_input_1: desc_input_1.setText(desc)
+        
+        # Set second row (Credit)
+        account_combo_2 = self.items_table.cellWidget(1, 0)
+        desc_input_2 = self.items_table.cellWidget(1, 1)
+        if account_combo_2:
+            index2 = account_combo_2.findData(credit_account)
+            if index2 >= 0: account_combo_2.setCurrentIndex(index2)
+        if desc_input_2: desc_input_2.setText(desc)
+        
+        self.template_combo.setCurrentIndex(0)
 
     def add_entry_line(self) -> None:
         row = self.items_table.rowCount()
         self.items_table.insertRow(row)
+        self.items_table.setRowHeight(row, 50)
         
-        # Account ComboBox
+        table_widget_style = f"""
+            border: none; 
+            background: transparent; 
+            color: {COLORS['text_main']};
+            padding: 5px;
+            font-size: 14px;
+        """
+        
         account_combo = QComboBox()
+        account_combo.setStyleSheet(table_widget_style)
         self.load_accounts(account_combo)
         self.items_table.setCellWidget(row, 0, account_combo)
         
-        # Description
         desc_item = QTableWidgetItem("")
         self.items_table.setItem(row, 1, desc_item)
         
-        # Debit Amount
         debit_spin = QDoubleSpinBox()
+        debit_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        debit_spin.setStyleSheet(table_widget_style + f"font-weight: bold; color: {COLORS['accent']};")
         debit_spin.setMaximum(999999999.99)
         debit_spin.setDecimals(2)
         debit_spin.valueChanged.connect(self.on_amount_changed)
         self.items_table.setCellWidget(row, 2, debit_spin)
         
-        # Credit Amount
         credit_spin = QDoubleSpinBox()
+        credit_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        credit_spin.setStyleSheet(table_widget_style + f"font-weight: bold; color: {COLORS['blue']};")
         credit_spin.setMaximum(999999999.99)
         credit_spin.setDecimals(2)
         credit_spin.valueChanged.connect(self.on_amount_changed)
         self.items_table.setCellWidget(row, 3, credit_spin)
 
     def load_accounts(self, combo: QComboBox) -> None:
-        """Load accounts into the combo box"""
         try:
             with DatabaseConnection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT id, code, name FROM accounts ORDER BY code")
+                cursor.execute("SELECT code, name FROM accounts ORDER BY code")
                 accounts = cursor.fetchall()
-                
-                for account in accounts:
-                    combo.addItem(f"{account[1]} - {account[2]}", account[0])
+                for acc in accounts:
+                    combo.addItem(f"{acc['code']} - {acc['name']}", acc['code'])
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load accounts: {str(e)}")
+            print(f"Error loading accounts: {e}")
 
-    def round_decimal(self, value: float) -> Decimal:
-        """Round a float value to 2 decimal places"""
-        dec = Decimal(str(value))
-        return dec.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
-    def on_amount_changed(self) -> None:
-        """Update totals when any amount changes"""
-        debit_total = Decimal('0.00')
-        credit_total = Decimal('0.00')
-        
+    def on_amount_changed(self, _) -> None:
+        total_debit = Decimal('0.00')
+        total_credit = Decimal('0.00')
         for row in range(self.items_table.rowCount()):
-            debit_spin = self.items_table.cellWidget(row, 2)
-            credit_spin = self.items_table.cellWidget(row, 3)
-            
-            if isinstance(debit_spin, QDoubleSpinBox) and isinstance(credit_spin, QDoubleSpinBox):
-                debit_total += self.round_decimal(debit_spin.value())
-                credit_total += self.round_decimal(credit_spin.value())
-        
-        self.debit_total_label.setText(f"Total Debit: ${debit_total:,.2f}")
-        self.credit_total_label.setText(f"Total Credit: ${credit_total:,.2f}")
-        
-        # Use exact decimal comparison
-        if abs(debit_total - credit_total) < Decimal('0.01'):
-            style = "color: black"
-        else:
-            style = "color: red"
-        self.debit_total_label.setStyleSheet(style)
-        self.credit_total_label.setStyleSheet(style)
-
-    def validate_entry(self) -> List[Dict[str, Union[int, str, Decimal]]]:
-        """Validate the journal entry and return a list of valid entries"""
-        if not self.ref_input.text() or not self.desc_input.text():
-            raise ValueError("Reference number and description are required")
-
-        debit_total = Decimal('0.00')
-        credit_total = Decimal('0.00')
-        entries = []
-        has_valid_entry = False
-
-        for row in range(self.items_table.rowCount()):
-            account_combo = self.items_table.cellWidget(row, 0)
-            debit_spin = self.items_table.cellWidget(row, 2)
-            credit_spin = self.items_table.cellWidget(row, 3)
-            
-            # Skip invalid cells
-            if not isinstance(account_combo, QComboBox) or \
-               not isinstance(debit_spin, QDoubleSpinBox) or \
-               not isinstance(credit_spin, QDoubleSpinBox):
-                continue
-
-            # Get values
-            debit = self.round_decimal(debit_spin.value())
-            credit = self.round_decimal(credit_spin.value())
-            desc_item = self.items_table.item(row, 1)
-            desc_text = desc_item.text() if desc_item else ""
-
-            # Skip empty entries (both debit and credit are 0)
-            if debit == 0 and credit == 0:
-                continue
-
-            # Can't have both debit and credit
-            if debit > 0 and credit > 0:
-                raise ValueError("Entry line cannot have both debit and credit amounts")
-
-            has_valid_entry = True
-            debit_total += debit
-            credit_total += credit
-            
-            entries.append({
-                'account_id': account_combo.currentData(),
-                'description': desc_text,
-                'debit': debit,
-                'credit': credit
-            })
-
-        if not has_valid_entry:
-            raise ValueError("At least one valid entry line is required")
-
-        # Convert to string and back to avoid floating point comparison issues
-        debit_str = f"{debit_total:.2f}"
-        credit_str = f"{credit_total:.2f}"
-        debit_normalized = Decimal(debit_str)
-        credit_normalized = Decimal(credit_str)
-
-        if debit_normalized != credit_normalized:
-            raise ValueError(f"Journal entry must balance. Difference: ${abs(debit_normalized - credit_normalized):,.2f}")
-
-        return entries
+            debit_widget = self.items_table.cellWidget(row, 2)
+            credit_widget = self.items_table.cellWidget(row, 3)
+            if isinstance(debit_widget, QDoubleSpinBox):
+                total_debit += Decimal(str(debit_widget.value()))
+            if isinstance(credit_widget, QDoubleSpinBox):
+                total_credit += Decimal(str(credit_widget.value()))
+        self.debit_total_label.setText(f"Total Debit: EGP {total_debit:,.2f}")
+        self.credit_total_label.setText(f"Total Credit: EGP {total_credit:,.2f}")
 
     def save_journal_entry(self) -> None:
-        """Save the journal entry to the database"""
+        total_debit = Decimal('0.00')
+        total_credit = Decimal('0.00')
+        lines = []
+        for row in range(self.items_table.rowCount()):
+            acc_combo = self.items_table.cellWidget(row, 0)
+            desc_item = self.items_table.item(row, 1)
+            debit_widget = self.items_table.cellWidget(row, 2)
+            credit_widget = self.items_table.cellWidget(row, 3)
+            acc_code = acc_combo.currentData()
+            desc = desc_item.text() if desc_item else ""
+            debit = Decimal(str(debit_widget.value()))
+            credit = Decimal(str(credit_widget.value()))
+            if debit > 0 or credit > 0:
+                lines.append({'account_code': acc_code, 'description': desc or self.desc_input.text(), 'debit': debit, 'credit': credit})
+                total_debit += debit
+                total_credit += credit
+        if total_debit != total_credit:
+            QMessageBox.warning(self, "Unbalanced Entry", f"Debits (EGP {total_debit:,.2f}) must equal Credits (EGP {total_credit:,.2f})")
+            return
+        if not lines:
+            QMessageBox.warning(self, "Empty Entry", "Please add at least one transaction line.")
+            return
         try:
-            entries = self.validate_entry()
-            
             with DatabaseConnection() as conn:
                 cursor = conn.cursor()
+                # Use correct table name 'journal_entries' and correct columns
+                cursor.execute("INSERT INTO journal_entries (date, reference_no, description) VALUES (?, ?, ?)", 
+                             (self.date_edit.date().toString(Qt.DateFormat.ISODate), self.ref_input.text(), self.desc_input.text()))
+                header_id = cursor.lastrowid
                 
-                # Create journal entry header
-                cursor.execute("""
-                    INSERT INTO journal_entries (date, reference_no, description)
-                    VALUES (?, ?, ?)
-                """, (
-                    self.date_edit.date().toString("yyyy-MM-dd"),
-                    self.ref_input.text(),
-                    self.desc_input.text()
-                ))
-                
-                journal_entry_id = cursor.lastrowid
-                
-                # Create journal entry items and update general ledger
-                for entry in entries:
-                    # Convert Decimal values to float for SQLite
-                    debit = float(entry['debit'])
-                    credit = float(entry['credit'])
-                    
-                    # Insert journal entry item
-                    cursor.execute("""
-                        INSERT INTO journal_entry_items 
-                        (journal_entry_id, account_id, description, debit, credit)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        journal_entry_id,
-                        entry['account_id'],
-                        entry['description'],
-                        debit,
-                        credit
-                    ))
-                    
-                    # Update account balance based on account type
-                    cursor.execute("""
-                        UPDATE accounts 
-                        SET balance = balance + CASE
-                            WHEN type IN ('asset', 'expense') THEN (? - ?)
-                            ELSE (? - ?)
-                        END
-                        WHERE id = ?
-                    """, (debit, credit, credit, debit, entry['account_id']))
-                    
-                    # Add to general ledger
-                    cursor.execute("""
-                        INSERT INTO general_ledger
-                        (account_id, journal_entry_id, date, description, debit, credit)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        entry['account_id'],
-                        journal_entry_id,
-                        self.date_edit.date().toString("yyyy-MM-dd"),
-                        entry['description'],
-                        debit,
-                        credit
-                    ))
-
-                QMessageBox.information(self, "Success", "Journal entry posted successfully")
+                for line in lines:
+                    # Use correct table name 'journal_entry_items' and correct columns
+                    cursor.execute("INSERT INTO journal_entry_items (journal_entry_id, account_id, description, debit, credit) VALUES (?, (SELECT id FROM accounts WHERE code=?), ?, ?, ?)", 
+                                 (header_id, line['account_code'], line['description'], float(line['debit']), float(line['credit'])))
+                conn.commit()
+                QMessageBox.information(self, "Success", "Journal entry posted successfully!")
                 self.clear_form()
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
-            if isinstance(e, sqlite3.Error):
-                print(f"Database error: {str(e)}")
+        except Exception as e: QMessageBox.critical(self, "Error", f"Failed to save entry: {e}")
 
     def clear_form(self) -> None:
-        """Clear the form after successful entry"""
-        self.date_edit.setDate(QDate.currentDate())
         self.ref_input.clear()
         self.desc_input.clear()
         self.items_table.setRowCount(0)
         self.add_entry_line()
-        self.on_amount_changed()
-
-    def showEvent(self, a0):
-        """Called when the widget becomes visible"""
-        super().showEvent(a0)
-        if hasattr(self, 'items_table'):
-            self.items_table.clearSelection()
-        
-    def hideEvent(self, a0):
-        """Called when the widget becomes hidden"""
-        super().hideEvent(a0)
-        if hasattr(self, 'items_table'):
-            self.items_table.clearSelection()
+        self.add_entry_line()
+        self.on_amount_changed(0)

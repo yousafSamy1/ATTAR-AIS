@@ -10,8 +10,11 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                            QLabel, QTableWidget, QTableWidgetItem, QComboBox,
                            QHeaderView, QDialog, QDateEdit, QMessageBox)
 from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtGui import QColor
 from database.db_config import DatabaseConnection
 from datetime import datetime, timedelta
+from modules.localization import tr
+from modules.theme import COLORS
 
 class AccountStatementDialog(QDialog):
     def __init__(self, parent=None, entity_type="customer"):
@@ -21,30 +24,31 @@ class AccountStatementDialog(QDialog):
         
     def init_ui(self):
         # Set window properties
-        self.setWindowTitle(f"{'Customer' if self.entity_type == 'customer' else 'Supplier'} Account Statement")
+        self.setWindowTitle(tr('customer_stmt') if self.entity_type == 'customer' else tr('supplier_stmt'))
         self.setMinimumSize(800, 600)
         
         layout = QVBoxLayout(self)
         
         # Header
-        header = QLabel(f"{'Customer' if self.entity_type == 'customer' else 'Supplier'} Account Statement")
-        header.setStyleSheet("font-size: 18px; font-weight: bold; margin-bottom: 10px;")
+        header = QLabel(tr('customer_stmt') if self.entity_type == 'customer' else tr('supplier_stmt'))
+        header.setStyleSheet(f"font-size: 18px; font-weight: bold; margin-bottom: 10px; color: {COLORS['text_main']};")
         layout.addWidget(header)
         
         # Entity Selection
         selection_layout = QHBoxLayout()
-        entity_label = QLabel(f"Select {'Customer' if self.entity_type == 'customer' else 'Supplier'}:")
+        label_text = tr('customers') if self.entity_type == 'customer' else tr('suppliers')
+        entity_label = QLabel(f"{tr('select')} {label_text}:")
         self.entity_combo = QComboBox()
         self.load_entities()
         
         # Date Range
         date_layout = QHBoxLayout()
-        from_label = QLabel("From:")
+        from_label = QLabel(tr('from'))
         self.from_date = QDateEdit()
         self.from_date.setDate(QDate.currentDate().addMonths(-1))
         self.from_date.setCalendarPopup(True)
         
-        to_label = QLabel("To:")
+        to_label = QLabel(tr('to'))
         self.to_date = QDateEdit()
         self.to_date.setDate(QDate.currentDate())
         self.to_date.setCalendarPopup(True)
@@ -63,12 +67,12 @@ class AccountStatementDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([
-            "Date", 
-            "Reference", 
-            "Description", 
-            "Debit", 
-            "Credit", 
-            "Balance"
+            tr("date"), 
+            tr("reference"), 
+            tr("description"), 
+            tr("debit"), 
+            tr("credit"), 
+            tr("balance")
         ])
         
         # Make table read-only
@@ -84,28 +88,31 @@ class AccountStatementDialog(QDialog):
             header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
             header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         
-        self.table.setColumnWidth(0, 100)  # Date
+        self.table.setColumnWidth(0, 130)  # Date (increased to prevent truncation)
         self.table.setColumnWidth(1, 120)  # Reference
         self.table.setColumnWidth(3, 100)  # Debit
         self.table.setColumnWidth(4, 100)  # Credit
         self.table.setColumnWidth(5, 120)  # Balance
+        
+        # Connect double click
+        self.table.itemDoubleClicked.connect(self._handle_double_click)
         
         layout.addWidget(self.table)
         
         # Buttons
         button_layout = QHBoxLayout()
         
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2ecc71;
+        refresh_btn = QPushButton(tr("refresh"))
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['green']};
                 color: white;
                 padding: 8px 15px;
                 border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #27ae60;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['sidebar_active']};
+            }}
         """)
         refresh_btn.clicked.connect(self.refresh_statement)
         
@@ -129,7 +136,7 @@ class AccountStatementDialog(QDialog):
                 entities = cursor.fetchall()
                 
                 self.entity_combo.clear()
-                self.entity_combo.addItem("Select...", None)
+                self.entity_combo.addItem(tr("select_dot"), None)
                 for entity in entities:
                     self.entity_combo.addItem(entity['name'], entity['id'])
                     
@@ -179,7 +186,7 @@ class AccountStatementDialog(QDialog):
                     cursor.execute("""
                         SELECT 
                             date,
-                            'INV-' || id as reference,
+                            'SLS-' || id as reference,
                             'Sales Invoice #' || id as description,
                             total_amount as debit,
                             0 as credit
@@ -220,7 +227,7 @@ class AccountStatementDialog(QDialog):
                     cursor.execute("""
                         SELECT 
                             date,
-                            'INV-' || id as reference,
+                            'PUR-' || id as reference,
                             'Purchase Invoice #' || id as description,
                             0 as debit,
                             total_amount as credit
@@ -272,7 +279,7 @@ class AccountStatementDialog(QDialog):
                 ref_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(0, 1, ref_item)
                 
-                desc_item = QTableWidgetItem("Opening Balance")
+                desc_item = QTableWidgetItem(tr("opening_balance"))
                 desc_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(0, 2, desc_item)
                 
@@ -284,7 +291,7 @@ class AccountStatementDialog(QDialog):
                 credit_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(0, 4, credit_item)
                 
-                balance_item = QTableWidgetItem(f"${opening_balance:.2f}")
+                balance_item = QTableWidgetItem(f"EGP {opening_balance:.2f}")
                 balance_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(0, 5, balance_item)
                 
@@ -292,7 +299,7 @@ class AccountStatementDialog(QDialog):
                 for col in range(6):
                     item = self.table.item(0, col)
                     if item:
-                        item.setBackground(Qt.GlobalColor.lightGray)
+                        item.setBackground(QColor(COLORS['sidebar_mid']))
                         font = item.font()
                         font.setBold(True)
                         item.setFont(font)
@@ -318,19 +325,33 @@ class AccountStatementDialog(QDialog):
                     self.table.setItem(i, 2, desc_item)
                     
                     # Debit
-                    debit_item = QTableWidgetItem(f"${trans['debit']:.2f}" if trans['debit'] > 0 else "")
+                    debit_item = QTableWidgetItem(f"EGP {trans['debit']:.2f}" if trans['debit'] > 0 else "")
                     debit_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     self.table.setItem(i, 3, debit_item)
                     
                     # Credit
-                    credit_item = QTableWidgetItem(f"${trans['credit']:.2f}" if trans['credit'] > 0 else "")
+                    credit_item = QTableWidgetItem(f"EGP {trans['credit']:.2f}" if trans['credit'] > 0 else "")
                     credit_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     self.table.setItem(i, 4, credit_item)
                     
                     # Balance
-                    balance_item = QTableWidgetItem(f"${running_balance:.2f}")
+                    balance_item = QTableWidgetItem(f"EGP {running_balance:.2f}")
                     balance_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     self.table.setItem(i, 5, balance_item)
                 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to refresh statement: {str(e)}") 
+            QMessageBox.critical(self, "Error", f"Failed to refresh statement: {str(e)}")
+
+    def _handle_double_click(self, item):
+        row = item.row()
+        ref_item = self.table.item(row, 1)
+        if not ref_item or not ref_item.text():
+            return
+            
+        ref = ref_item.text()
+        if not hasattr(self.parent(), 'handle_transaction_click'):
+            return
+            
+        # Call the navigation method in main.py
+        self.parent().handle_transaction_click(ref)
+        # We no longer call self.accept() here so the statement remains open in the background 

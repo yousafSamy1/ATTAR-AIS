@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                             QFormLayout, QMessageBox, QDialog, QHeaderView)
 from PyQt6.QtCore import Qt, pyqtSignal
 from database.db_config import DatabaseConnection
+from modules.theme import COLORS, get_button_style
 
 class SupplierDialog(QDialog):
     def __init__(self, parent=None, supplier_data=None):
@@ -41,10 +42,12 @@ class SupplierDialog(QDialog):
         
         # Add buttons
         button_box = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        cancel_btn = QPushButton("Cancel")
-        
+        save_btn = QPushButton("💾 Save")
+        save_btn.setStyleSheet(get_button_style('accent'))
         save_btn.clicked.connect(self.validate_and_accept)
+        
+        cancel_btn = QPushButton("❌ Cancel")
+        cancel_btn.setStyleSheet(get_button_style('bg_mid'))
         cancel_btn.clicked.connect(self.reject)
         
         button_box.addWidget(save_btn)
@@ -79,26 +82,38 @@ class SupplierDialog(QDialog):
 class SuppliersModule(QWidget):
     supplier_added = pyqtSignal()  # Signal to emit when supplier is added
     
-    def __init__(self):
+    def __init__(self, user=None):
         super().__init__()
+        self.user = user
         self.init_ui()
         self.load_suppliers()
     
     def init_ui(self):
+        # Create main layout
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        main_layout.setSpacing(15)
         self.setLayout(main_layout)
+        
+        # Add header
+        header = QLabel("Supplier Management")
+        header.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {COLORS['text_main']}; margin-bottom: 20px; background: transparent; border: none; border-bottom: 2px solid {COLORS['border']}; padding-bottom: 8px;")
+        main_layout.addWidget(header)
         
         # Create top buttons
         btn_layout = QHBoxLayout()
-        self.add_btn = QPushButton("Add Supplier")
-        self.edit_btn = QPushButton("Edit Supplier")
-        self.delete_btn = QPushButton("Delete Supplier")
+        # Style buttons using theme helpers
+        self.add_btn = QPushButton("➕ Add Supplier")
+        self.edit_btn = QPushButton("✏️ Edit Supplier")
+        self.delete_btn = QPushButton("🗑️ Delete Supplier")
         
-        # Style buttons
-        button_style = "color: white; padding: 8px 16px; border-radius: 6px; font-weight: bold;"
-        self.add_btn.setStyleSheet(f"background-color: #27AE60; {button_style}")
-        self.edit_btn.setStyleSheet(f"background-color: #2471A3; {button_style}")
-        self.delete_btn.setStyleSheet(f"background-color: #C0392B; {button_style}")
+        self.add_btn.setFixedWidth(200)
+        self.edit_btn.setFixedWidth(200)
+        self.delete_btn.setFixedWidth(200)
+        
+        self.add_btn.setStyleSheet(get_button_style('green'))
+        self.edit_btn.setStyleSheet(get_button_style('blue'))
+        self.delete_btn.setStyleSheet(get_button_style('red'))
         
         # Add buttons to layout
         btn_layout.addWidget(self.add_btn)
@@ -107,6 +122,29 @@ class SuppliersModule(QWidget):
         btn_layout.addStretch()
         
         main_layout.addLayout(btn_layout)
+        
+        # Create search layout
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Search suppliers by name, phone, email...")
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                padding: 8px 12px;
+                border: 2px solid {COLORS['border']};
+                border-radius: 6px;
+                font-size: 14px;
+                background-color: {COLORS['bg_card']};
+                margin-top: 10px;
+                margin-bottom: 5px;
+            }}
+            QLineEdit:focus {{
+                border-color: {COLORS['accent']};
+            }}
+        """)
+        self.search_input.textChanged.connect(self.filter_suppliers)
+        search_layout.addWidget(self.search_input)
+        
+        main_layout.addLayout(search_layout)
         
         # Create and setup table
         self.table = QTableWidget()
@@ -122,10 +160,26 @@ class SuppliersModule(QWidget):
         header = self.table.horizontalHeader()
         if header:
             header.setMinimumSectionSize(50)
-            header.setStretchLastSection(True)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch) # Name
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch) # Address
+            self.table.setColumnWidth(0, 60)   # ID
+            self.table.setColumnWidth(2, 120)  # Phone
+            self.table.setColumnWidth(3, 220)  # Email
         
         # Connect button signals
+        # Robust role check
+        is_admin = False
+        is_staff = False
+        if self.user and hasattr(self.user, 'get'):
+            role = self.user.get('role')
+            is_admin = (role == 'admin')
+            is_staff = (role in ['admin', 'staff'])
+            
+        self.add_btn.setVisible(is_staff)
+        self.edit_btn.setVisible(is_staff)
+        self.delete_btn.setVisible(is_admin)
+        
         self.add_btn.clicked.connect(self.add_supplier)
         self.edit_btn.clicked.connect(self.edit_supplier)
         self.delete_btn.clicked.connect(self.delete_supplier)
@@ -150,9 +204,6 @@ class SuppliersModule(QWidget):
                         item = QTableWidgetItem(str(value))
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                         self.table.setItem(row, col, item)
-                
-                # Adjust column widths
-                self.table.resizeColumnsToContents()
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Failed to load suppliers: {str(e)}")
     
@@ -234,6 +285,17 @@ class SuppliersModule(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to delete supplier: {str(e)}")
 
+    def filter_suppliers(self):
+        search_text = self.search_input.text().lower()
+        for row in range(self.table.rowCount()):
+            match = False
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item and search_text in item.text().lower():
+                    match = True
+                    break
+            self.table.setRowHidden(row, not match)
+            
     def showEvent(self, a0):
         """Called when the widget becomes visible"""
         super().showEvent(a0)

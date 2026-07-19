@@ -20,26 +20,33 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,  # Table cell item
     QSpinBox,          # Integer input spinner
     QDoubleSpinBox,    # Decimal input spinner
+    QComboBox,         # Drop-down selection
     QMessageBox,       # Modal message dialog
-    QHeaderView        # Header view for tables
+    QHeaderView,       # Header view for tables
+    QTabWidget         # Tabbed widget for sections
 )
 from PyQt6.QtCore import (
     Qt,               # Core non-widget functionality
     QTimer,           # Timer for periodic events
     pyqtSignal        # Signal/slot communication
 )
+from datetime import datetime
 from PyQt6.QtGui import QColor  # Color handling
 
 # Database Configuration
 from database.db_config import DatabaseConnection  # Custom database connection handler
+from modules.theme import COLORS, get_button_style
+from modules.localization import tr
 
 class InventoryModule(QWidget):
     product_deleted = pyqtSignal(int)  # Signal emitted when a product is deleted
     product_added = pyqtSignal()  # Signal emitted when a product is added
     product_updated = pyqtSignal()  # Signal emitted when a product is updated
     
-    def __init__(self):
+    def __init__(self, user=None):
         super().__init__()
+        self.user = user
+        self._alert_shown = False
         self.init_ui()
         self.load_products()
         
@@ -55,382 +62,328 @@ class InventoryModule(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(15)
 
         # Header
         header = QLabel("Inventory Management")
-        header.setStyleSheet("font-size: 22px; font-weight: bold; color: #1C1008; margin-bottom: 20px; background: transparent; border: none; border-bottom: 2px solid #E8DDD0; padding-bottom: 8px;")
+        header.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {COLORS['text_main']}; margin-bottom: 20px; background: transparent; border: none; border-bottom: 2px solid {COLORS['border']}; padding-bottom: 8px;")
         layout.addWidget(header)
 
-        # Form layout setup
-        self.form_layout = QVBoxLayout()
-        
-        # Product Name
-        name_layout = QHBoxLayout()
-        name_label = QLabel("Product Name:")
-        self.name_input = QLineEdit()
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(self.name_input)
-        self.form_layout.addLayout(name_layout)
-
-        # Product Description
-        desc_layout = QHBoxLayout()
-        desc_label = QLabel("Description:")
-        self.desc_input = QLineEdit()
-        desc_layout.addWidget(desc_label)
-        desc_layout.addWidget(self.desc_input)
-        self.form_layout.addLayout(desc_layout)
-
-        # Unit Price
-        price_layout = QHBoxLayout()
-        price_label = QLabel("Unit Price:")
-        self.price_input = QDoubleSpinBox()
-        self.price_input.setMinimum(0.01)
-        self.price_input.setMaximum(999999.99)
-        self.price_input.setDecimals(2)
-        price_layout.addWidget(price_label)
-        price_layout.addWidget(self.price_input)
-        self.form_layout.addLayout(price_layout)
-
-        # Quantity
-        qty_layout = QHBoxLayout()
-        qty_label = QLabel("Initial Quantity:")
-        self.qty_input = QSpinBox()
-        self.qty_input.setMinimum(0)
-        self.qty_input.setMaximum(9999)
-        qty_layout.addWidget(qty_label)
-        qty_layout.addWidget(self.qty_input)
-        self.form_layout.addLayout(qty_layout)
-
-        # Minimum Quantity
-        min_qty_layout = QHBoxLayout()
-        min_qty_label = QLabel("Minimum Quantity:")
-        self.min_qty_input = QSpinBox()
-        self.min_qty_input.setMinimum(0)
-        self.min_qty_input.setMaximum(9999)
-        min_qty_layout.addWidget(min_qty_label)
-        min_qty_layout.addWidget(self.min_qty_input)
-        self.form_layout.addLayout(min_qty_layout)
-
-        # Add Product Button with modern styling
-        self.add_btn = QPushButton("+ Add Product")
-        self.add_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #27AE60;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #229954; }
+        # Sections (Tabs)
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: 1px solid {COLORS['border']}; border-top: none; background: {COLORS['bg_card']}; border-radius: 0 0 6px 6px; }}
+            QTabBar::tab {{ background: {COLORS['bg']}; color: {COLORS['text_dim']}; padding: 12px 24px; font-weight: bold; border: 1px solid {COLORS['border']}; border-bottom: none; border-radius: 6px 6px 0 0; margin-right: 2px; }}
+            QTabBar::tab:selected {{ background: {COLORS['bg_card']}; color: {COLORS['accent']}; border-bottom: 2px solid {COLORS['accent']}; }}
         """)
-        self.add_btn.clicked.connect(self.add_product)
-        self.form_layout.addWidget(self.add_btn)
         
-        layout.addLayout(self.form_layout)
+        # Bulk Tab
+        self.bulk_tab = QWidget()
+        self.bulk_layout = QVBoxLayout(self.bulk_tab)
+        self.bulk_table = self.create_table()
+        self.bulk_layout.addWidget(self.bulk_table)
+        self.tabs.addTab(self.bulk_tab, f"📦 {tr('bulk_products')}")
         
-        # Products Table
-        self.products_table = QTableWidget()
-        self.products_table.setColumnCount(6)
-        self.products_table.setHorizontalHeaderLabels(["ID", "Name", "Description", "Unit Price", "Quantity", "Min. Quantity"])
-        self.products_table.verticalHeader().setVisible(False)
-        self.products_table.verticalHeader().setDefaultSectionSize(40)
-        self.products_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.products_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        layout.addWidget(self.products_table)
+        # Packaged Tab
+        self.packaged_tab = QWidget()
+        self.packaged_layout = QVBoxLayout(self.packaged_tab)
+        self.packaged_table = self.create_table()
+        self.packaged_layout.addWidget(self.packaged_table)
+        self.tabs.addTab(self.packaged_tab, f"🏷️ {tr('packaged_products')}")
+        
+        # Low Stock Tab
+        self.low_stock_tab = QWidget()
+        self.low_stock_layout = QVBoxLayout(self.low_stock_tab)
+        self.low_stock_table = self.create_table()
+        self.low_stock_layout.addWidget(self.low_stock_table)
+        self.tabs.addTab(self.low_stock_tab, f"⚠️ {tr('low_stock')}")
+
+        # Near Expired Tab
+        self.expiry_tab = QWidget()
+        self.expiry_layout = QVBoxLayout(self.expiry_tab)
+        self.expiry_table = self.create_table()
+        self.expiry_layout.addWidget(self.expiry_table)
+        self.tabs.addTab(self.expiry_tab, f"⏰ {tr('near_expired')}")
+        
+        layout.addWidget(self.tabs)
 
         # Action Buttons layout
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(10)
         
+        # Robust admin check
+        is_admin = False
+        if self.user and hasattr(self.user, 'get'):
+            is_admin = (self.user.get('role') == 'admin')
+        
+        can_edit = is_admin
+
         # Edit button with modern styling
-        edit_btn = QPushButton("Edit Selected")
-        edit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2471A3;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #1A5276; }
-        """)
+        edit_btn = QPushButton("✏️ " + (tr('edit') + " " + tr('selected') if tr('selected') != 'selected' else "Edit Selected"))
+        edit_btn.setStyleSheet(get_button_style('blue'))
         edit_btn.clicked.connect(self.edit_selected_product)
+        edit_btn.setVisible(can_edit)
         buttons_layout.addWidget(edit_btn)
 
         # Delete button with modern styling
-        delete_btn = QPushButton("Delete Selected")
-        delete_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #C0392B;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #A93226; }
-        """)
+        delete_btn = QPushButton("🗑️ Delete Selected")
+        delete_btn.setStyleSheet(get_button_style('red'))
         delete_btn.clicked.connect(self.delete_selected_product)
+        delete_btn.setVisible(can_edit)
         buttons_layout.addWidget(delete_btn)
         
         layout.addLayout(buttons_layout)
-        self.products_table.itemDoubleClicked.connect(self.edit_selected_product)
+        
+        # Create search layout
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Search products by name, description...")
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                padding: 12px 16px;
+                border: 2px solid {COLORS['border']};
+                border-radius: 8px;
+                font-size: 14px;
+                background-color: {COLORS['bg_card']};
+                margin-bottom: 10px;
+            }}
+            QLineEdit:focus {{ border-color: {COLORS['accent']}; }}
+        """)
+        self.search_input.textChanged.connect(self.filter_products)
+        search_layout.addWidget(self.search_input)
+        layout.insertLayout(1, search_layout)
 
-        # Enable form inputs by default
-        self.set_form_enabled(True)
+    def create_table(self):
+        table = QTableWidget()
+        table.setColumnCount(7)
+        table.setHorizontalHeaderLabels([
+            "ID", 
+            tr('product_name'), 
+            tr('description'), 
+            tr('price'), 
+            tr('quantity'), 
+            tr('min_qty'), 
+            tr('expiry')
+        ])
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(40)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.itemDoubleClicked.connect(self.edit_selected_product)
+        
+        # Configure column stretching
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch) # Product Name
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch) # Description
+        
+        return table
+        
+        # Create search layout
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Search products by name, description...")
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                padding: 12px 16px;
+                border: 2px solid {COLORS['border']};
+                border-radius: 8px;
+                font-size: 14px;
+                background-color: {COLORS['bg_card']};
+                margin-bottom: 10px;
+            }}
+            QLineEdit:focus {{ border-color: {COLORS['accent']}; }}
+        """)
+        self.search_input.textChanged.connect(self.filter_products)
+        search_layout.addWidget(self.search_input)
+        layout.insertLayout(1, search_layout)
 
-    def set_form_enabled(self, enabled: bool):
-        """Enable or disable all form inputs"""
-        self.name_input.setReadOnly(not enabled)
-        self.desc_input.setReadOnly(not enabled)
-        self.price_input.setReadOnly(not enabled)
-        self.qty_input.setReadOnly(not enabled)
-        self.min_qty_input.setReadOnly(not enabled)
+    def get_active_table(self):
+        return self.tabs.currentWidget().findChild(QTableWidget)
 
     def edit_selected_product(self):
-        selected_rows = self.products_table.selectedItems()
-        if not selected_rows:
+        table = self.get_active_table()
+        row = table.currentRow()
+        if row < 0:
             QMessageBox.warning(self, "Warning", "Please select a product to edit")
             return
 
-        row = self.products_table.currentRow()
-        
         try:
-            # Get all necessary items first
-            id_item = self.products_table.item(row, 0)
-            name_item = self.products_table.item(row, 1)
-            desc_item = self.products_table.item(row, 2)
-            price_item = self.products_table.item(row, 3)
-            qty_item = self.products_table.item(row, 4)
-            min_qty_item = self.products_table.item(row, 5)
+            id_item = table.item(row, 0)
+            if not id_item: return
+            product_id = int(id_item.text())
             
-            # Check if any item is None
-            if not all([id_item, name_item, desc_item, price_item, qty_item, min_qty_item]):
-                QMessageBox.warning(self, "Error", "Could not get complete product information")
-                return
-
-            try:
-                product_id = int(id_item.text())
-                current_name = name_item.text()
-                current_desc = desc_item.text()
-                current_price = float(price_item.text().replace("$", ""))
-                current_qty = int(qty_item.text())
-                current_min_qty = int(min_qty_item.text())
-            except (ValueError, AttributeError) as e:
-                QMessageBox.warning(self, "Error", f"Invalid data format: {str(e)}")
-                return
-
-            # Fill the form with current values
-            self.name_input.setText(current_name)
-            self.desc_input.setText(current_desc)
-            self.price_input.setValue(current_price)
-            self.qty_input.setValue(current_qty)
-            self.min_qty_input.setValue(current_min_qty)
-            
-            # Hide add button
-            self.add_btn.hide()
-            
-            # Create and show update button
-            if not hasattr(self, 'update_btn') or self.update_btn is None:
-                self.update_btn = QPushButton("Update Product")
-                self.update_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #C8760A;
-                        color: white;
-                        padding: 10px 20px;
-                        border-radius: 6px;
-                        font-size: 13px;
-                        font-weight: bold;
-                    }
-                    QPushButton:hover { background-color: #A06008; }
-                """)
-                self.update_btn.clicked.connect(lambda: self.update_product(product_id))
-                self.form_layout.addWidget(self.update_btn)
-                self.update_btn.show()
-            
+            # Show the same ProductDefinitionDialog for editing
+            from modules.purchases import ProductDefinitionDialog
+            dialog = ProductDefinitionDialog(self, edit_id=product_id)
+            if dialog.exec():
+                self.load_products()
+                self.product_updated.emit()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error editing product: {str(e)}")
 
-    def update_product(self, product_id):
-        if not self.name_input.text().strip():
-            QMessageBox.warning(self, "Error", "Product name is required")
-            return
-
-        try:
-            with DatabaseConnection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE products
-                    SET name = ?, description = ?, unit_price = ?, quantity = ?, minimum_quantity = ?
-                    WHERE id = ?
-                """, (
-                    self.name_input.text().strip(),
-                    self.desc_input.text().strip(),
-                    self.price_input.value(),
-                    self.qty_input.value(),
-                    self.min_qty_input.value(),
-                    product_id
-                ))
-
-            QMessageBox.information(self, "Success", "Product updated successfully!")
-            
-            # Clear form
-            self.name_input.clear()
-            self.desc_input.clear()
-            self.price_input.setValue(0.01)
-            self.qty_input.setValue(0)
-            self.min_qty_input.setValue(0)
-            
-            # Remove update button and show add button
-            if hasattr(self, 'update_btn') and self.update_btn is not None:
-                self.update_btn.deleteLater()
-                self.update_btn = None
-            
-            self.add_btn.show()
-            
-            # Reload products with center alignment
-            self.load_products()
-            # Emit signal for product updated
-            self.product_updated.emit()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error updating product: {str(e)}")
-
     def delete_selected_product(self):
-        selected_rows = self.products_table.selectedItems()
-        if not selected_rows:
+        table = self.get_active_table()
+        row = table.currentRow()
+        if row < 0:
             QMessageBox.warning(self, "Warning", "Please select a product to delete")
             return
-
-        row = self.products_table.currentRow()
         
         try:
-            id_item = self.products_table.item(row, 0)
-            name_item = self.products_table.item(row, 1)
+            id_item = table.item(row, 0)
+            name_item = table.item(row, 1)
             
             if not all([isinstance(x, QTableWidgetItem) for x in [id_item, name_item]]):
                 QMessageBox.warning(self, "Error", "Could not get product information")
                 return
             
-            try:
-                product_id = int(id_item.text())
-                product_name = name_item.text()
-            except (ValueError, AttributeError) as e:
-                QMessageBox.warning(self, "Error", f"Invalid data format: {str(e)}")
-                return
+            product_id = int(id_item.text())
+            product_name = name_item.text()
 
             reply = QMessageBox.question(self, 'Confirm Delete',
                                        f'Are you sure you want to delete product "{product_name}"?',
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
             if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    with DatabaseConnection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
-
-                    QMessageBox.information(self, "Success", "Product deleted successfully!")
-                    self.load_products()
-                    self.product_deleted.emit(product_id)
-
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Error deleting product: {str(e)}")
+                with DatabaseConnection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
+                
+                QMessageBox.information(self, "Success", "Product deleted successfully!")
+                self.load_products()
+                self.product_deleted.emit(product_id)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error accessing product data: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error deleting product: {str(e)}")
+
+    def toggle_product_type_fields(self, index):
+        pass # Moved to dialog
 
     def load_products(self):
         try:
             with DatabaseConnection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM products ORDER BY name")
-                products = cursor.fetchall()
+                products = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
 
-                self.products_table.setRowCount(len(products))
-                low_stock_products = []  # Track products below minimum quantity
+                bulk_products = [p for p in products if p.get('product_type') != 'packaged']
+                packaged_products = [p for p in products if p.get('product_type') == 'packaged']
+                low_stock_products = [p for p in products if p.get('quantity', 0) <= p.get('minimum_quantity', 0)]
                 
-                for i, product in enumerate(products):
-                    for j, value in enumerate(product):
-                        item = QTableWidgetItem(str(value))
-                        if j == 3:  # Format unit price as currency
-                            item = QTableWidgetItem(f"${float(value):.2f}")
-                        
-                        # Set center alignment for all columns
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                            
-                        # Make all cells read-only
-                        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                        
-                        # Highlight products with quantity below minimum
-                        if j == 4 and product['quantity'] <= product['minimum_quantity']:
-                            item.setBackground(QColor('#FDEDEC'))
-                            item.setForeground(QColor('#C0392B'))
-                            low_stock_products.append(f"{product['name']} (Current: {product['quantity']}, Min: {product['minimum_quantity']})")
-                            
-                        self.products_table.setItem(i, j, item)
+                # Near Expired filter (<= 30 days or already expired)
+                near_expired_products = []
+                today = datetime.now()
+                for p in products:
+                    expiry_date_str = p.get('expiry_date')
+                    if expiry_date_str:
+                        try:
+                            expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d")
+                            if (expiry_date - today).days <= 30:
+                                near_expired_products.append(p)
+                        except:
+                            pass
 
-                # Set column widths
-                header = self.products_table.horizontalHeader()
-                if header:
-                    header.setStretchLastSection(True)
-                    for i in range(self.products_table.columnCount()):
-                        header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+                self.populate_table(self.bulk_table, bulk_products)
+                self.populate_table(self.packaged_table, packaged_products)
+                self.populate_table(self.low_stock_table, low_stock_products)
+                self.populate_table(self.expiry_table, near_expired_products)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading products: {str(e)}")
 
-    def add_product(self):
-        if not self.name_input.text().strip():
-            QMessageBox.warning(self, "Error", "Product name is required")
-            return
-
-        try:
-            with DatabaseConnection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO products (name, description, unit_price, quantity, minimum_quantity)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    self.name_input.text().strip(),
-                    self.desc_input.text().strip(),
-                    self.price_input.value(),
-                    self.qty_input.value(),
-                    self.min_qty_input.value()
-                ))
-
-            QMessageBox.information(self, "Success", "Product added successfully!")
-
-            # Clear form
-            self.name_input.clear()
-            self.desc_input.clear()
-            self.price_input.setValue(0.01)
-            self.qty_input.setValue(0)
-            self.min_qty_input.setValue(0)
+    def populate_table(self, table, products):
+        table.setRowCount(len(products))
+        for row, product in enumerate(products):
+            table.setItem(row, 0, QTableWidgetItem(str(product['id'])))
+            table.setItem(row, 1, QTableWidgetItem(product['name']))
+            table.setItem(row, 2, QTableWidgetItem(product['description']))
             
-            # Reload products
-            self.load_products()
-            self.product_added.emit()
+            p_type = product.get('product_type', 'bulk')
+            price = product['unit_price']
+            qty = product['quantity']
+            min_qty = product['minimum_quantity']
+            
+            if p_type == 'packaged':
+                table.setItem(row, 3, QTableWidgetItem(f"EGP {price:.2f}/Ctn (Bag: {product['piece_price']:.2f})"))
+                table.setItem(row, 4, QTableWidgetItem(f"{qty:.0f} Cartons"))
+                table.setItem(row, 5, QTableWidgetItem(f"{min_qty:.0f} Cartons"))
+            else:
+                qty_str = f"{qty*1000:.0f} g" if qty < 1 else f"{qty:.3f} kg"
+                min_qty_str = f"{min_qty*1000:.0f} g" if min_qty < 1 else f"{min_qty:.3f} kg"
+                table.setItem(row, 3, QTableWidgetItem(f"EGP {price:.2f}/kg"))
+                table.setItem(row, 4, QTableWidgetItem(qty_str))
+                table.setItem(row, 5, QTableWidgetItem(min_qty_str))
+            
+            # Expiry Column
+            expiry_str = "N/A"
+            expiry_date_str = product.get('expiry_date')
+            if expiry_date_str:
+                try:
+                    expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d")
+                    today = datetime.now()
+                    diff = expiry_date - today
+                    days_left = diff.days
+                    
+                    if days_left < 0:
+                        expiry_str = f"❌ Expired ({abs(days_left)}d ago)"
+                    elif days_left == 0:
+                        expiry_str = "⚠️ Expires Today"
+                    elif days_left < 30:
+                        expiry_str = f"⚠️ {days_left} days left"
+                    else:
+                        months = days_left // 30
+                        expiry_str = f"✅ {months} months left"
+                except:
+                    expiry_str = expiry_date_str
+            
+            table.setItem(row, 6, QTableWidgetItem(expiry_str))
+            
+            for col in range(7):
+                item = table.item(row, col)
+                if item:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    
+                    # Color coding for expiry
+                    if col == 6:
+                        if "❌" in expiry_str:
+                            item.setForeground(QColor("#EF4444")) # Red
+                        elif "⚠️" in expiry_str:
+                            item.setForeground(QColor("#F59E0B")) # Amber
+                        elif "✅" in expiry_str:
+                            item.setForeground(QColor("#10B981")) # Green
+                    
+        header = table.horizontalHeader()
+        if header:
+            header.setStretchLastSection(True)
+            for i in range(table.columnCount()):
+                header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error adding product: {str(e)}")
-
+    def filter_products(self):
+        search_text = self.search_input.text().lower()
+        for table in [self.bulk_table, self.packaged_table, self.low_stock_table, self.expiry_table]:
+            for row in range(table.rowCount()):
+                match = False
+                for col in range(table.columnCount()):
+                    item = table.item(row, col)
+                    if item and search_text in item.text().lower():
+                        match = True
+                        break
+                table.setRowHidden(row, not match)
+            
     def show_low_stock_warning(self):
         """Show warning for products below minimum quantity"""
-        low_stock_products = []
-        for row in range(self.products_table.rowCount()):
-            qty_item = self.products_table.item(row, 4)  # Quantity column
-            min_qty_item = self.products_table.item(row, 5)  # Minimum Quantity column
-            name_item = self.products_table.item(row, 1)  # Name column
+        if self._alert_shown:
+            return
             
-            if all([qty_item, min_qty_item, name_item]) and isinstance(qty_item, QTableWidgetItem) and isinstance(min_qty_item, QTableWidgetItem) and isinstance(name_item, QTableWidgetItem):
-                try:
-                    qty = int(qty_item.text())
-                    min_qty = int(min_qty_item.text())
-                    if qty <= min_qty:
-                        low_stock_products.append(f"{name_item.text()} (Current: {qty}, Min: {min_qty})")
-                except (ValueError, AttributeError):
-                    continue
+        low_stock_products = []
+        for row in range(self.low_stock_table.rowCount()):
+            name_item = self.low_stock_table.item(row, 1)
+            qty_item = self.low_stock_table.item(row, 4)
+            min_qty_item = self.low_stock_table.item(row, 5)
+            if all([name_item, qty_item, min_qty_item]):
+                low_stock_products.append(f"{name_item.text()} (Current: {qty_item.text()}, Min: {min_qty_item.text()})")
         
         if low_stock_products:
             warning_msg = "⚠️ Low Stock Alert ⚠️\n\n"
@@ -438,6 +391,7 @@ class InventoryModule(QWidget):
             warning_msg += "\n".join(f"• {name}" for name in low_stock_products)
             warning_msg += "\n\nPlease create purchase orders for these items."
             QMessageBox.warning(self, "Low Stock Warning", warning_msg)
+            self._alert_shown = True
 
     def showEvent(self, a0):
         """Called when the widget becomes visible"""
@@ -445,12 +399,15 @@ class InventoryModule(QWidget):
         self.load_products()
         # Show warning after 500ms delay
         self.warning_timer.start(500)
-        if hasattr(self, 'products_table'):
-            self.products_table.clearSelection()
+        self.bulk_table.clearSelection()
+        self.packaged_table.clearSelection()
+        self.low_stock_table.clearSelection()
+        self.expiry_table.clearSelection()
 
     def hideEvent(self, a0):
         """Called when the widget becomes hidden"""
         super().hideEvent(a0)
         self.refresh_timer.stop()
-        if hasattr(self, 'products_table'):
-            self.products_table.clearSelection()
+        self.bulk_table.clearSelection()
+        self.packaged_table.clearSelection()
+        self.low_stock_table.clearSelection()

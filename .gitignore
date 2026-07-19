@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# PyInstaller / Build outputs
+build/
+dist/
+*.manifest
+*.spec.bak
+
+# Logs and databases
+*.log
+crash_log.txt
+*.tmp
+
+# System files
+.DS_Store
+Thumbs.db

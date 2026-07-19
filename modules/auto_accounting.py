@@ -24,7 +24,7 @@ class AutoAccountingModule(QObject):
         super().__init__()
     
     def create_sales_journal_entry(self, cursor, sale_id: int, customer_id: int, total_amount: float, 
-                                 cost_of_goods: float, date: str) -> None:
+                                 cost_of_goods: float, date: str, payment_type: str = 'cash') -> None:
         """Create journal entries for a sales transaction"""
         try:
             # Create the journal entry header
@@ -41,28 +41,29 @@ class AutoAccountingModule(QObject):
             if journal_entry_id is None:
                 raise Exception("Failed to create journal entry - no ID returned")
             
-            # 1. Debit Accounts Receivable
-            self._create_journal_item(cursor, journal_entry_id, "1100", 
-                                   f"Sales Invoice #{sale_id}", total_amount, 0)
+            # 1. Debit Asset Account (Cash or A/R)
+            asset_account = "1000" if payment_type == 'cash' else "1100"
+            self._create_journal_item(cursor, journal_entry_id, asset_account, 
+                                   f"Sales Invoice #{sale_id} ({payment_type})", total_amount, 0)
             
             # 2. Credit Sales Revenue
             self._create_journal_item(cursor, journal_entry_id, "4000",
                                    f"Sales Invoice #{sale_id}", 0, total_amount)
             
-            # 3. Debit Cost of Goods Sold
-            self._create_journal_item(cursor, journal_entry_id, "5000",
-                                   f"COGS for Sale #{sale_id}", cost_of_goods, 0)
+            # 2. COGS (Debit COGS, Credit Inventory) - Only if cost > 0
+            if cost_of_goods > 0:
+                self._create_journal_item(cursor, journal_entry_id, "5000",
+                                       f"COGS for Sale #{sale_id}", cost_of_goods, 0)
+                self._create_journal_item(cursor, journal_entry_id, "1200",
+                                       f"COGS for Sale #{sale_id}", 0, cost_of_goods)
             
-            # 4. Credit Inventory
-            self._create_journal_item(cursor, journal_entry_id, "1200",
-                                   f"COGS for Sale #{sale_id}", 0, cost_of_goods)
-            
-            # Update customer balance
-            cursor.execute("""
-                UPDATE customers 
-                SET balance = balance + ?
-                WHERE id = ?
-            """, (total_amount, customer_id))
+            # Update customer balance ONLY if it's a credit sale
+            if payment_type == 'credit':
+                cursor.execute("""
+                    UPDATE customers 
+                    SET balance = balance + ?
+                    WHERE id = ?
+                """, (total_amount, customer_id))
             
             self.journal_entry_created.emit(journal_entry_id)
                 
@@ -70,7 +71,7 @@ class AutoAccountingModule(QObject):
             raise Exception(f"Failed to create sales journal entry: {str(e)}")
     
     def create_purchase_journal_entry(self, cursor, purchase_id: int, supplier_id: int, 
-                                    total_amount: float, date: str) -> None:
+                                    total_amount: float, date: str, payment_type: str = 'cash') -> None:
         """Create journal entries for a purchase transaction"""
         try:
             # Create the journal entry header
@@ -89,16 +90,18 @@ class AutoAccountingModule(QObject):
             self._create_journal_item(cursor, journal_entry_id, "1200",
                                    f"Purchase Invoice #{purchase_id}", total_amount, 0)
             
-            # 2. Credit Accounts Payable
-            self._create_journal_item(cursor, journal_entry_id, "2000",
-                                   f"Purchase Invoice #{purchase_id}", 0, total_amount)
+            # 2. Credit Liability or Cash (A/P or Cash)
+            payment_account = "2000" if payment_type == 'credit' else "1000"
+            self._create_journal_item(cursor, journal_entry_id, payment_account, 
+                                   f"Purchase Invoice #{purchase_id} ({payment_type})", 0, total_amount)
             
-            # Update supplier balance
-            cursor.execute("""
-                UPDATE suppliers 
-                SET balance = balance + ?
-                WHERE id = ?
-            """, (total_amount, supplier_id))
+            # Update supplier balance ONLY if it's a credit purchase
+            if payment_type == 'credit':
+                cursor.execute("""
+                    UPDATE suppliers 
+                    SET balance = balance + ?
+                    WHERE id = ?
+                """, (total_amount, supplier_id))
             
             self.journal_entry_created.emit(journal_entry_id)
                 
@@ -121,8 +124,24 @@ class AutoAccountingModule(QObject):
             
             journal_entry_id = cursor.lastrowid
             
-            # 1. Debit Operating Expenses
-            self._create_journal_item(cursor, journal_entry_id, "6000",
+            # Map category to specific account
+            category_map = {
+                "Salaries": "6000",
+                "Rent": "6100",
+                "Utilities": "6200",
+                "Maintenance": "6300",
+                "Transportation": "6400",
+                "Supplies": "6500",
+                "Bad Debt": "6600",
+                "Depreciation": "6700",
+                "Purchase": "5000",
+                "Other": "6800"
+            }
+            
+            account_code = category_map.get(category, "6800")
+            
+            # 1. Debit Specific Expense Account
+            self._create_journal_item(cursor, journal_entry_id, account_code,
                                    f"Expense #{expense_id} - {category}", amount, 0)
             
             # 2. Credit Cash

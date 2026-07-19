@@ -91,14 +91,40 @@ def init_database():
         
         # Insert default accounts if they don't exist
         default_accounts = [
+            # Assets
             ('1000', 'Cash', 'asset'),
+            ('1050', 'Bank', 'asset'),
             ('1100', 'Accounts Receivable', 'asset'),
             ('1200', 'Inventory', 'asset'),
+            ('1300', 'Equipment', 'asset'),
+            ('1350', 'Accumulated Depreciation', 'asset'),  # Contra-asset, but 'asset' for balance logic
+
+            # Liabilities
             ('2000', 'Accounts Payable', 'liability'),
-            ('3000', 'Owner''s Equity', 'equity'),
+            ('2100', 'Salaries Payable', 'liability'),
+            ('2200', 'Rent Payable', 'liability'),
+            ('2300', 'Utilities Payable', 'liability'),
+
+            # Equity
+            ('3000', 'Owner Capital', 'equity'),
+            ('3100', 'Retained Earnings', 'equity'),
+            ('3200', 'Drawing', 'equity'),
+
+            # Revenue
             ('4000', 'Sales Revenue', 'revenue'),
+            ('4100', 'Wholesale Revenue', 'revenue'),
+
+            # Expenses
             ('5000', 'Cost of Goods Sold', 'expense'),
-            ('6000', 'Operating Expenses', 'expense')
+            ('6000', 'Salaries Expense', 'expense'),
+            ('6100', 'Rent Expense', 'expense'),
+            ('6200', 'Utilities Expense', 'expense'),
+            ('6300', 'Maintenance Expense', 'expense'),
+            ('6400', 'Transportation Expense', 'expense'),
+            ('6500', 'Supplies Expense', 'expense'),
+            ('6600', 'Bad Debt Expense', 'expense'),
+            ('6700', 'Depreciation Expense', 'expense'),
+            ('6800', 'Miscellaneous Expense', 'expense')
         ]
         
         cursor.executemany('''
@@ -133,10 +159,34 @@ def init_database():
                 name TEXT NOT NULL,
                 description TEXT,
                 unit_price REAL NOT NULL,
-                quantity INTEGER DEFAULT 0,
-                minimum_quantity INTEGER DEFAULT 0
+                quantity REAL DEFAULT 0,
+                minimum_quantity REAL DEFAULT 0,
+                product_type TEXT DEFAULT 'bulk',
+                pieces_per_unit INTEGER DEFAULT 1,
+                piece_price REAL DEFAULT 0,
+                expiry_date DATE
             );
+        """)
 
+        # Migration: Add columns to products if they don't exist
+        cursor.execute("PRAGMA table_info(products)")
+        columns = [info[1] for info in cursor.fetchall()]
+        if 'product_type' not in columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN product_type TEXT DEFAULT 'bulk'")
+        if 'pieces_per_unit' not in columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN pieces_per_unit INTEGER DEFAULT 1")
+        if 'piece_price' not in columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN piece_price REAL DEFAULT 0")
+        if 'expiry_date' not in columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN expiry_date DATE")
+
+        # Migration for purchase_items
+        cursor.execute("PRAGMA table_info(purchase_items)")
+        p_items_columns = [info[1] for info in cursor.fetchall()]
+        if 'expiry_date' not in p_items_columns and len(p_items_columns) > 0:
+            cursor.execute("ALTER TABLE purchase_items ADD COLUMN expiry_date DATE")
+
+        cursor.executescript("""
             CREATE TABLE IF NOT EXISTS sales_invoices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
@@ -144,6 +194,7 @@ def init_database():
                 total_amount REAL NOT NULL,
                 paid_amount REAL DEFAULT 0,
                 status TEXT DEFAULT 'pending',
+                payment_type TEXT DEFAULT 'cash',
                 FOREIGN KEY (customer_id) REFERENCES customers (id)
             );
 
@@ -151,7 +202,7 @@ def init_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invoice_id INTEGER,
                 product_id INTEGER,
-                quantity INTEGER NOT NULL,
+                quantity REAL NOT NULL,
                 unit_price REAL NOT NULL,
                 FOREIGN KEY (invoice_id) REFERENCES sales_invoices (id),
                 FOREIGN KEY (product_id) REFERENCES products (id)
@@ -164,6 +215,8 @@ def init_database():
                 total_amount REAL NOT NULL,
                 paid_amount REAL DEFAULT 0,
                 status TEXT DEFAULT 'pending',
+                payment_type TEXT DEFAULT 'cash',
+                due_date TEXT,
                 FOREIGN KEY (supplier_id) REFERENCES suppliers (id)
             );
 
@@ -171,8 +224,9 @@ def init_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invoice_id INTEGER,
                 product_id INTEGER,
-                quantity INTEGER NOT NULL,
+                quantity REAL NOT NULL,
                 unit_price REAL NOT NULL,
+                expiry_date DATE,
                 FOREIGN KEY (invoice_id) REFERENCES purchase_invoices (id),
                 FOREIGN KEY (product_id) REFERENCES products (id)
             );
@@ -192,7 +246,117 @@ def init_database():
                 description TEXT,
                 amount REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'staff')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS purchase_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER,
+                price REAL,
+                date TEXT,
+                supplier_id INTEGER,
+                FOREIGN KEY (product_id) REFERENCES products (id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER UNIQUE,
+                instructions TEXT,
+                FOREIGN KEY (product_id) REFERENCES products (id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_ingredients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER,
+                ingredient_id INTEGER,
+                quantity REAL, 
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id),
+                FOREIGN KEY (ingredient_id) REFERENCES products(id)
+            );
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                action TEXT NOT NULL,
+                module TEXT,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
         """)
+
+        # Migration: Add columns to products if they don't exist
+        cursor.execute("PRAGMA table_info(products)")
+        cols = [info[1] for info in cursor.fetchall()]
+        if 'is_recipe' not in cols:
+            cursor.execute("ALTER TABLE products ADD COLUMN is_recipe INTEGER DEFAULT 0")
+        if 'unit_cost' not in cols:
+            cursor.execute("ALTER TABLE products ADD COLUMN unit_cost REAL DEFAULT 0")
+
+        # Migration: Add payment_type to invoices
+        cursor.execute("PRAGMA table_info(sales_invoices)")
+        s_cols = [info[1] for info in cursor.fetchall()]
+        if 'payment_type' not in s_cols and len(s_cols) > 0:
+            cursor.execute("ALTER TABLE sales_invoices ADD COLUMN payment_type TEXT DEFAULT 'cash'")
+
+        cursor.execute("PRAGMA table_info(purchase_invoices)")
+        p_cols = [info[1] for info in cursor.fetchall()]
+        if 'payment_type' not in p_cols and len(p_cols) > 0:
+            cursor.execute("ALTER TABLE purchase_invoices ADD COLUMN payment_type TEXT DEFAULT 'cash'")
+        if 'due_date' not in p_cols and len(p_cols) > 0:
+            cursor.execute("ALTER TABLE purchase_invoices ADD COLUMN due_date TEXT")
+            
+        # Migration: Ensure sales status is correct (Cash sales should be 'paid')
+        cursor.execute("UPDATE sales_invoices SET status = 'paid', paid_amount = total_amount WHERE payment_type = 'cash' AND status = 'pending'")
+        
+        # Migration: Ensure paid_amount is initialized for all purchase invoices
+        cursor.execute("UPDATE purchase_invoices SET paid_amount = total_amount WHERE paid_amount IS NULL AND payment_type = 'cash'")
+        cursor.execute("UPDATE purchase_invoices SET paid_amount = 0 WHERE paid_amount IS NULL AND payment_type = 'credit'")
+        
+        # Data Repair: Recalculate total_amount for invoices that were saved as 0 due to a UI bug
+        cursor.execute("""
+            UPDATE purchase_invoices 
+            SET total_amount = (
+                SELECT COALESCE(SUM(quantity * unit_price), 0)
+                FROM purchase_items
+                WHERE invoice_id = purchase_invoices.id
+            )
+            WHERE total_amount = 0
+        """)
+        
+        # Re-initialize paid_amount for the repaired records if they are cash
+        cursor.execute("UPDATE purchase_invoices SET paid_amount = total_amount WHERE payment_type = 'cash' AND (paid_amount = 0 OR paid_amount IS NULL) AND total_amount > 0")
+        
+        # Data Repair: Backfill missing due_date for credit invoices (default to invoice date)
+        cursor.execute("""
+            UPDATE purchase_invoices 
+            SET due_date = date
+            WHERE payment_type = 'credit' AND due_date IS NULL
+        """)
+
+        # Insert default admin if no users exist
+        cursor.execute("SELECT COUNT(*) FROM users")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
+                          ('admin', 'admin123', 'admin'))
 
 # Initialize database when module is imported
 init_database()
+
+def log_action(user_id, username, action, module, details=None):
+    try:
+        with DatabaseConnection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO audit_logs (user_id, username, action, module, details)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, username, action, module, details))
+    except Exception as e:
+        print(f"Failed to log action: {e}")
